@@ -1,0 +1,102 @@
+---
+permalink: /posts/first-steps
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A hands-on blueprint for making your own cloud at home with networking, Proxmox, storage, Docker, DNS, remote access, and home services.">
+  <title>Make Your Own Cloud @ Home — Packets & Progress</title>
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="icon" type="image/svg+xml" href="../favicon.svg">
+  <meta name="theme-color" content="#0b1319">
+  <link rel="canonical" href="https://avichadda.github.io/networking-journey/posts/first-steps">
+</head>
+<body>
+  <div class="topline"><span class="pulse"></span> MAKE YOUR OWN CLOUD @ HOME <span class="topline-right">NETWORKING · INFRASTRUCTURE · SELF-HOSTING</span></div>
+  <header class="site-header wrap"><a class="brand" href="../index.html"><span class="brand-mark">P<span>+</span></span><span>Packets <i>&</i> Progress</span></a><nav aria-label="Main navigation"><a href="../index.html#topics">Topics</a><a href="../index.html#latest">Latest notes</a><a class="nav-cta" href="../index.html">Home <span>↗</span></a></nav></header>
+  <main class="article-wrap">
+    <div class="article-breadcrumb"><a href="../index.html">Home</a><span>/</span><span>Make Your Own Cloud @ Home</span></div>
+    <header class="article-header"><div class="eyebrow"><span class="eyebrow-line"></span> FIELD NOTE 01 · MAKE YOUR OWN CLOUD @ HOME</div><h1>Make Your Own Cloud @ Home: <span>Network, Compute, Storage, and Services</span></h1><p class="article-deck">A practical guide to the building blocks of a personal cloud: connect your network, run services on your own hardware, manage files and media, and reach selected services securely when away from home.</p><div class="article-meta">BEGINNER FRIENDLY <span>·</span> 8–10 MIN READ <span>·</span> CONCEPTS + CHECKLISTS</div></header>
+    <div class="article-hero-art"><div class="stack-layer"><span>01</span><b>NETWORK</b><small>Omada · LAN · Wi-Fi</small></div><div class="stack-layer"><span>02</span><b>COMPUTE</b><small>Proxmox · pve0</small></div><div class="stack-layer"><span>03</span><b>PLATFORM</b><small>Docker · DNS · access</small></div><div class="stack-layer layer4"><span>04</span><b>SERVICES</b><small>Home Assistant · media · apps</small></div><div class="stack-note">A useful mental model: each layer depends on the ones below it.</div></div>
+    <div class="article-layout">
+      <aside class="toc"><div class="toc-title">IN THIS ARTICLE</div><a href="#architecture">01 Cloud architecture</a><a href="#network">02 Network</a><a href="#proxmox">03 Compute</a><a href="#storage">04 Storage & backups</a><a href="#dns">05 DNS & names</a><a href="#containers">06 Apps & containers</a><a href="#remote-access">07 Remote access</a><a href="#automation">08 Home automation</a><a href="#troubleshoot">09 Troubleshooting</a><a href="#next-steps">10 Next steps</a></aside>
+      <article class="prose">
+        <p class="lead">A personal cloud is a collection of services you run and control on your own infrastructure. It might include file storage, media streaming, home automation, private DNS, and tools you can securely reach while away from home. You do not need enterprise hardware to start—but you do need to think about networking, storage, updates, security, and backups as parts of the same system.</p>
+        <p>The lab components used as examples here include Omada networking, a Microsoft Surface Go running Proxmox VE on the node <code>pve0</code>, and services involving NAS and Plex, Docker, AdGuard Home, Tailscale, and Home Assistant. This article explains how those pieces can fit into a home-cloud design; it does not assume every service is connected in one finished architecture.</p>
+        <div class="notice"><b>Configuration note</b><p>This is a practical architecture guide, not a claim that every component is deployed in one fully integrated configuration. Exact IP addresses, VLAN IDs, bridge names, DNS records, container placement, and firewall rules have not been specified here; substitute the values from your actual setup before running commands.</p></div>
+        <h2 id="architecture">01 — What does “your own cloud” mean?</h2>
+        <p>Cloud services do not have to run in a commercial data centre. At home, your own hardware can host applications and data while networking, virtualisation, and remote access make them usable. The trade-off is responsibility: you manage maintenance, security, availability, and recovery yourself. A useful way to organise the system is in layers, from connectivity up to the apps you use.</p>
+        <ol><li><b>Physical and wireless connectivity:</b> Is the device connected to Ethernet or Wi-Fi?</li><li><b>Network:</b> Does it have a valid address, gateway, and route?</li><li><b>Name resolution:</b> Does the hostname resolve to the expected IP address?</li><li><b>Host and platform:</b> Is the target machine, VM, or container running?</li><li><b>Application:</b> Is the service listening on the expected port and reachable under the intended policy?</li></ol>
+        <p>This layered method helps isolate a fault instead of changing several variables at once.</p>
+        <h2 id="network">02 — Connect the cloud: gateway, switching, and Wi-Fi</h2>
+        <p>The Omada equipment identified for this lab includes an ER605 gateway, a TL-SG2210MP managed PoE+ switch, compatible Omada access points, and an Omada Controller. These components serve different roles:</p>
+        <ul><li><b>Gateway/router:</b> routes traffic between the local network and other networks, subject to its configuration.</li><li><b>Managed switch:</b> connects wired devices and supports features such as VLANs and PoE where configured and supported.</li><li><b>Access points:</b> provide wireless access to the network.</li><li><b>Controller:</b> provides central management for supported Omada devices.</li></ul>
+        <p>A managed switch does not automatically mean VLAN segmentation is active. VLANs, SSID-to-VLAN mappings, trunk/access port settings, DHCP scopes, and firewall policies must be configured consistently before devices are isolated as intended.</p>
+        <h3>Basic connectivity checks</h3><p>On a Linux machine, start with:</p>
+        <pre><code>ip addr
+ip route
+ping -c 4 &lt;default-gateway-ip&gt;</code></pre>
+        <p>These commands show interface addresses, the routing table, and whether the host can reach its configured gateway. Replace the placeholder with the actual gateway address. A successful ping is useful evidence, but a failed ping alone does not prove the whole network is down—ICMP may be filtered.</p>
+        <h2 id="proxmox">03 — Compute layer: Proxmox on <code>pve0</code></h2>
+        <p>The small-form-factor compute host identified for this lab is a Microsoft Surface Go with 8 GB RAM and a 128 GB SSD, running Proxmox VE. The node name is <code>pve0</code>.</p>
+        <p>This is a useful environment for learning virtualisation, but its resources are finite. Leave room for the host itself, monitor memory pressure, and avoid assigning all available RAM to guests. Storage capacity and endurance also matter when services write logs, databases, or media metadata.</p>
+        <p>Proxmox can run virtual machines and Linux containers. Docker is a separate container platform; a common design is to run Docker inside a dedicated Linux VM, but the exact placement in this setup should be confirmed before documenting it as fact.</p>
+        <h3>Useful first checks</h3><pre><code>hostname
+free -h
+df -h
+ip route</code></pre>
+        <p>Run these on the relevant Linux host to inspect the hostname, memory, mounted filesystems, and routes. For Proxmox-specific configuration changes, consult the documentation for the installed version and back up configuration before editing network settings remotely.</p>
+        <h2 id="storage">04 — Storage, media, and backups</h2>
+        <p>A cloud is only useful if its data is organised and recoverable. A NAS can provide centralised storage; Plex can serve media; other self-hosted applications may store documents, photos, or application data. These roles are different, and their storage needs differ too.</p>
+        <ul><li><b>Separate data by purpose:</b> distinguish media libraries, personal files, application configuration, and databases where practical.</li><li><b>Plan capacity:</b> estimate current usage and growth, and monitor free space before disks become full.</li><li><b>Back up important data:</b> a second folder or another directory on the same disk is not an independent backup.</li><li><b>Test restores:</b> a backup is only useful if it can be restored when needed.</li></ul>
+        <p>For a small host such as the Surface Go, capacity and resource constraints matter. Be clear about which storage is local to the host, which is provided by a NAS, and which data is protected elsewhere. The exact disk layout and backup destination should be documented from the actual setup rather than guessed.</p>
+        <h3>A simple backup inventory</h3><pre><code>Data to protect | Where it lives | Backup destination | Last restore test</code></pre>
+        <p>Record these details for personal files, service configuration, and any application data that would be difficult to recreate. Do not publish sensitive file paths or credentials in a public repository.
+        </p>
+        <h2 id="dns">05 — DNS: make services discoverable</h2>
+        <p>As a homelab grows, opening each service by IP address becomes cumbersome. AdGuard Home can provide DNS filtering and, when configured for it, local DNS rewrites. Tailscale also offers MagicDNS for names within a tailnet. These solve related but different naming problems.</p>
+        <ul><li><b>Local DNS:</b> names intended for clients using the configured local resolver.</li><li><b>MagicDNS:</b> names for devices in a Tailscale network, subject to tailnet DNS settings.</li><li><b>Application URL:</b> the hostname and port a browser or client uses to reach a service.</li></ul>
+        <p>A DNS record does not start a service, open a firewall port, or create HTTPS certificates. Name resolution is only one part of access.</p>
+        <h3>Test name resolution</h3><pre><code>nslookup &lt;service-hostname&gt;
+# or, where available:
+dig &lt;service-hostname&gt;</code></pre>
+        <p>Check which resolver answered and whether the returned address is the one you expect. If results differ between devices, compare their DNS settings and any VPN or split-DNS configuration.</p>
+        <h2 id="containers">06 — Run your own apps with Docker</h2>
+        <p>Docker makes applications easier to package and manage, but container networking introduces its own boundaries. A container can be running while its application is unhealthy, its port is unpublished, or its hostname is only resolvable from a particular network.</p>
+        <p>For a Docker host, useful inspection commands include:</p><pre><code>docker ps
+docker logs --tail=100 &lt;container-name&gt;
+docker port &lt;container-name&gt;
+docker network ls</code></pre>
+        <p>These help identify running containers, recent logs, published ports, and Docker networks. Before changing a Compose file, confirm which ports the application listens on inside the container and which ports are published on the host.</p>
+        <div class="code-caption">Example diagnostic sequence — not a deployment recipe</div><pre><code># 1. Is the container running?
+docker ps
+
+# 2. Are there startup or application errors?
+docker logs --tail=100 &lt;container-name&gt;
+
+# 3. Is the expected port published?
+docker port &lt;container-name&gt;</code></pre>
+        <h2 id="remote-access">07 — Reach your cloud securely with Tailscale</h2>
+        <p>Tailscale can provide private connectivity between authorised devices without requiring every internal service to be exposed directly to the public internet. MagicDNS can make tailnet devices easier to address. Availability still depends on the device being connected, access controls, host firewalls, and the service listening on the target interface and port.</p>
+        <p>For administration, use least privilege: grant access only to the devices and people that need it, keep software updated, and avoid exposing management dashboards unnecessarily. Do not assume that joining a tailnet automatically makes every service reachable or appropriately secured.</p>
+        <p>When a remote connection fails, verify tailnet connectivity first, then name resolution, routing and access policy, host firewall rules, and the target service itself.</p>
+        <h2 id="automation">08 — Connect home automation</h2>
+        <p>Home Assistant is a useful homelab workload because integrations can depend on discovery, DNS, multicast, or direct local connectivity. Details vary by integration and network layout.</p>
+        <p>If an integration cannot discover a device, check that both devices are online and that the network permits the discovery method it uses. VLAN boundaries can block broadcast or multicast discovery unless the network is deliberately configured to support it. Do not disable segmentation broadly just to make discovery work; identify the specific traffic required.</p>
+        <h2 id="troubleshoot">09 — A repeatable troubleshooting checklist</h2>
+        <div class="checklist"><div><span>01</span><p><b>Link</b><small>Is Ethernet or Wi-Fi connected?</small></p></div><div><span>02</span><p><b>Address</b><small>Does the client have the expected IP and subnet?</small></p></div><div><span>03</span><p><b>Gateway</b><small>Can it reach its next hop?</small></p></div><div><span>04</span><p><b>DNS</b><small>Does the hostname resolve to the correct address?</small></p></div><div><span>05</span><p><b>Port</b><small>Is the target port listening and reachable?</small></p></div><div><span>06</span><p><b>Policy</b><small>Could a firewall, ACL, or tailnet rule block it?</small></p></div><div><span>07</span><p><b>Logs</b><small>What do the host and application logs report?</small></p></div></div>
+        <p>Change one variable at a time and record what changed. That makes it easier to identify the root cause and reverse a change if necessary.</p>
+        <h2 id="next-steps">10 — What to document next</h2>
+        <p>The most useful next step is to create an accurate network inventory. Record the actual device roles, hostnames, IP ranges, DNS resolvers, VLANs (if configured), service locations, and the path used for remote access. Avoid publishing public IPs, credentials, recovery keys, private keys, or sensitive topology details.</p>
+        <p>Future field notes can cover individual projects in depth: setting up a cloud storage service, backing up Proxmox guests, organising a NAS, deploying Docker apps, creating local DNS records with AdGuard Home, secure remote access with Tailscale, and connecting Home Assistant safely.</p>
+        <div class="closing-callout"><span class="callout-mark">P+</span><div><b>Build. Test. Document.</b><p>A home cloud becomes useful when your data has a home, your services have a clear place to run, remote access is deliberate, and backups are tested—not merely configured.</p></div></div>
+        <div class="article-footnote"><b>Accuracy note:</b> Hardware and software names reflect the lab components identified for this project. Specific network settings and deployment relationships not confirmed are intentionally left as placeholders or described as options.</div>
+        <a class="back-home" href="../index.html">← Back to Packets & Progress</a>
+      </article>
+    </div>
+  </main>
+  <footer class="site-footer"><div class="wrap footer-inner"><a class="brand" href="../index.html"><span class="brand-mark">P<span>+</span></span><span>Packets <i>&</i> Progress</span></a><span>Practical guides to building your own cloud at home.</span><a href="../index.html">Home ↑</a></div></footer>
+</body>
+</html>
